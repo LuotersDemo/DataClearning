@@ -1,3 +1,15 @@
+# -*- coding: utf-8 -*-
+"""
+-------------------------------------------------
+# @Project      :数据清洗
+# @File         :累计流量数据清洗算法
+# @Date         :2020/12/10 14:00
+# @Py_version   :Py_3.7
+# @Author       :Luoters
+# @Email        :118****139@qq.com
+# @Software     :PyCharm
+-------------------------------------------------
+"""
 import cx_Oracle
 import pandas as pd
 import numpy as np
@@ -17,7 +29,7 @@ os.environ['NLS_LANG']='SIMPLIFIED CHINESE_CHINA.UTF8'
 def connectToOracle():
     conn=create_engine('oracle+cx_oracle://用户名:密码@IP地址:端口号/实例名')      #conn连接器
 
-    #测试sql
+    # #测试sql
     # sql="select MONITOR_ID,COLLECT_DATE,COLLECT_TIME,VALUE_DATA,UPLOAD,LESSEE_ID,rk " \
     #     "from (" \
     #         "select a.*,row_number() over(partition by MONITOR_ID order by COLLECT_TIME) rk " \
@@ -70,41 +82,43 @@ def MDH_Data_Cleansing(data):
 
     #获取每个递增趋势数据的头节点的行索引，存进节点数组arraySwitch
     arraySwitch = []
-    for j in range(0,m-1):
+    for j in range(1,m-1):
         if(rk[j] == 1):
+            arraySwitch.append(j-1)
             arraySwitch.append(j)
         j += 1
 
-    arraySwitch.append(m)       #追加最后一个递增趋势数据的尾节点的行索引（即所有递增趋势的数据的总数）
+    arraySwitch.insert(0,0)
+    arraySwitch.append(m-1)       #追加最后一个递增趋势数据的尾节点的行索引（即所有递增趋势的数据的总数-1）
     num=len(arraySwitch)
     print("节点数组个数num=",num)
     print("节点数组arraySwitch=",arraySwitch)
 
     # 对data数组中不符合单调递增趋势的异常数据进行清洗
     dataResult=pd.DataFrame(columns=['value_data'])       #用于存储最终清洗和降噪完成，合并后的Dframe数据
-    for s  in range(0,num-1):
+    s=0
+    while s < num-1:
         value_data1 = np.array(data.loc[arraySwitch[s]:arraySwitch[s+1],'value_data'])      #循环逐一取出递增趋势数据
-        value_data2=value_data1[0:-1]       #删除每一个取出的递增趋势数据的脏数据（每个递增趋势数据的最后一个值，但最后一个递增趋势数据是没有脏数据的）
-        #print(value_data2)
-        n = len(value_data2)    #获取单个递增趋势数据的长度
+        #value_data2=value_data1[0:-1]       #删除每一个取出的递增趋势数据的脏数据（每个递增趋势数据的最后一个值，但最后一个递增趋势数据是没有脏数据的）
+        #print(value_data1)
+        n = len(value_data1)    #获取单个递增趋势数据的个数
 
         #清洗（以直接前驱进行替换）
-        for i in range(1, n - 3):
-            if (value_data2[i] < value_data2[i - 1]):
-                value_data2[i] = value_data2[i - 1]
-            if (value_data2[i] > value_data2[i - 1] and value_data2[i] > value_data2[i + 1] and value_data2[i] > value_data2[i + 2]
-                    and value_data2[i] > value_data2[i + 3]):
-                value_data2[i] = value_data2[i - 1]
+        for i in range(1, n - 2):
+            if (value_data1[i] < value_data1[i - 1]):
+                value_data1[i] = value_data1[i - 1]
+            if (value_data1[i] > value_data1[i - 1] and value_data1[i] > value_data1[i + 1] and value_data1[i] > value_data1[i + 2]):
+                value_data1[i] = value_data1[i - 1]
             i += 1
-        data_demo=pd.DataFrame(value_data2,columns=['value_data'])
-        print("\n第",s+1,"个递增趋势数据,清洗后/降噪前：\n",data_demo)
+        data_demo=pd.DataFrame(value_data1,columns=['value_data'])
+        print("\n\n该递增趋势数据,清洗后/降噪前：\n",data_demo)
 
         # 箱线图分析法检测噪声值
-        print("该递增趋势数据数据量，描述信息：",n,"\n",data_demo['value_data'].describe(percentiles=[.25, .75], include=['object', 'float64']))  # describe
+        print("递增趋势数据数据量为",n,"，描述信息：","\n",data_demo['value_data'].describe(percentiles=[.25, .75], include=['object', 'float64']))  # describe
         distance_data = data_demo['value_data'].quantile(0.75) - data_demo['value_data'].quantile(0.25)  # 四分位距，即箱
         top_data = data_demo['value_data'].quantile(0.75) + 1.5 * distance_data  # 箱线的上限
         bottom_data = data_demo['value_data'].quantile(0.25) - 1.5 * distance_data  # 箱线的下限
-        count_data = (data_demo['value_data'] <= top_data) & (data_demo['value_data'] >= bottom_data)  # 噪声值
+        count_data = (data_demo['value_data'] <= top_data) | (data_demo['value_data'] >= bottom_data)  # 噪声值
 
         index_toarray = np.array(data_demo[count_data == False].index)  # 取出异常值索引
         print("正常值(True) vs 噪声值个数(False)：\n", count_data.value_counts(), "噪声值的行索引：", index_toarray)  # 打印噪声值数和索引
@@ -112,11 +126,9 @@ def MDH_Data_Cleansing(data):
         data_demo.loc[index_toarray, 'value_data'] = data_demo['value_data'].median().round(3)  # 中位数替换
         print("降噪后:\n",data_demo)
         dataResult=dataResult.append(data_demo)      #循环逐一合并递增趋势数组，存储于Dataframe表dataResult
-        s += 1
+        s += 2
 
-    dataResult=dataResult.append(dataResult.iloc[-1])       #以行追加的方式，在末尾补上删掉的脏数据时误删的一个数据
     dataResult.index=range(len(dataResult))     #重建Dataframe索引
-
     data.drop('rk',axis=1,inplace=True)
     data.drop('value_data', axis=1, inplace=True)  # 删除列value_data
     data['value_data']=dataResult['value_data']       #清洗后列值替换
@@ -157,7 +169,7 @@ def MDH_Dataframe_toOracle(data):       #将Dataframe数据写入ORACLE数据库
 
 if __name__ == '__main__':
     pd.set_option('display.max_columns', None)  # 控制台完整显示列
-    pd.set_option('display.max_rows', 1000)  # 行数
+    pd.set_option('display.max_rows', 50)  # 行数
     pd.set_option('display.width',500)  # 列数
     pd.set_option('max.colwidth',100)   #列宽
 
